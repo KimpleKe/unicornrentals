@@ -99,4 +99,4 @@ def process_message(msg):
 
 if __name__ == "__main__":
     # By default, we disable threading for "debugging" purposes.
-    app.run(host="0.0.0.0", port="5000", threaded=True)
+    app.run(host="0.0.0.0", port="80", threaded=True)
