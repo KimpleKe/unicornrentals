@@ -7,6 +7,7 @@ import logging
 import argparse
 import urllib2
 from flask import Flask, request
+from flask_dynamo import Dynamo
 
 # configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,10 +20,26 @@ API_BASE = os.getenv("GD_API_BASE")
 if API_BASE is None:
     raise Exception("Must define GD_API_BASE environment variable")
 
-# defining global vars
-MESSAGES = {} # A dictionary that contains message parts
+MESSAGES = {}
 
 app = Flask(__name__)
+app.config.update(
+  DEBUG=True,
+  AWS_REGION='us-west-2'
+)
+
+app.config['DYNAMO_TABLES'] = [
+    {
+         TableName='messages',
+         KeySchema=[dict(AttributeName='msg_id', KeyType='HASH')],
+         AttributeDefinitions=[dict(AttributeName='msg_id', AttributeType='S')],
+         ProvisionedThroughput=dict(ReadCapacityUnits=5, WriteCapacityUnits=5)
+    }
+ ]
+
+dynamo = Dynamo()
+dynamo.init_app(app)
+dynamo.create_all()
 
 # creating flask route for type argument
 @app.route('/', methods=['GET', 'POST'])
@@ -55,6 +72,9 @@ def process_message(msg):
 
     # Try to get the parts of the message from the MESSAGES dictionary.
     # If it's not there, create one that has None in both parts
+
+    #dynamo.tables['messages'].get(msg_id)
+
     parts = MESSAGES.get(msg_id, [None, None])
 
     # store this part of the message in the correct part of the list
