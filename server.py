@@ -73,22 +73,67 @@ def process_message(msg):
     # Try to get the parts of the message from the MESSAGES dictionary.
     # If it's not there, create one that has None in both parts
 
-    #dynamo.tables['messages'].get(msg_id)
+    table = dynamo.tables['messages']
+    item = {'first': None, 'second': None}
 
-    parts = MESSAGES.get(msg_id, [None, None])
+    try:
+        response = table.get_item(
+            Key={
+                'msg_id': msg_id
+            }
+        )
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+    else:
+        item = response['Item']
+        print("GetItem succeeded:")
+        print(json.dumps(item, indent=4, cls=DecimalEncoder))
 
-    # store this part of the message in the correct part of the list
-    parts[part_number] = data
+    # parts = MESSAGES.get(msg_id, [None, None])
 
-    # store the parts in MESSAGES
-    MESSAGES[msg_id] = parts
+    # # store this part of the message in the correct part of the list
+    # parts[part_number] = data
+
+    # # store the parts in MESSAGES
+    # MESSAGES[msg_id] = parts
+
+    if part_number == 0:
+        response = table.update_item(
+            Key={
+                'msg_id': msg_id,
+            },
+            UpdateExpression="set first = :r",
+            ExpressionAttributeValues={
+                ':r': data,
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        first_part = data
+        second_part = item.second
+    elif part_number == 1:
+        response = table.update_item(
+            Key={
+                'msg_id': msg_id,
+            },
+            UpdateExpression="set second = :r",
+            ExpressionAttributeValues={
+                ':r': data,
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        first_part = item.first
+        second_part = data
+
+    print("UpdateItem succeeded:")
+    print(json.dumps(response, indent=4, cls=DecimalEncoder))
 
     # if both parts are filled, the message is complete
     if None not in parts:
         # app.logger.debug("got a complete message for %s" % msg_id)
         logging.info("Have both parts for msg_id={}".format(msg_id))
         # We can build the final message.
-        result = parts[0] + parts[1]
+        # result = parts[0] + parts[1]
+        result = first_part + second_part
         logging.debug("Assembled message: {}".format(result))
         # sending the response to the score calculator
         # format:
