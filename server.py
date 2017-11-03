@@ -20,7 +20,7 @@ API_BASE = os.getenv("GD_API_BASE")
 if API_BASE is None:
     raise Exception("Must define GD_API_BASE environment variable")
 
-MESSAGES = {}
+#MESSAGES = {}
 
 app = Flask(__name__)
 app.config.update(
