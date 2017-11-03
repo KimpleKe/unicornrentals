@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 """
-Client which receives and processes the requests
+Client which receives and processes the requests and stores messages in DynamoDB.
+
+DynamoDB table schema:
+    Partition Key: msg_id (String)
+    Range Key: part_number (Number)
 """
 import os
 import logging
 import argparse
 import urllib2
+import boto3
 from flask import Flask, request
-from flask_dynamo import Dynamo
+from boto3.dynamodb.conditions import Key
 
 # configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,27 +24,14 @@ if API_TOKEN is None:
 API_BASE = os.getenv("GD_API_BASE")
 if API_BASE is None:
     raise Exception("Must define GD_API_BASE environment variable")
-
-#MESSAGES = {}
+DYNAMO_TABLE = os.getenv("GD_DYNAMO_TABLE")
+if DYNAMO_TABLE is None:
+    raise Exception("Must define GD_DYNAMO_TABLE environment variable")
 
 app = Flask(__name__)
-app.config.update(
-  DEBUG=True,
-  AWS_REGION='us-west-2'
-)
 
-app.config['DYNAMO_TABLES'] = [
-    {
-         TableName='messages',
-         KeySchema=[dict(AttributeName='msg_id', KeyType='HASH')],
-         AttributeDefinitions=[dict(AttributeName='msg_id', AttributeType='S')],
-         ProvisionedThroughput=dict(ReadCapacityUnits=5, WriteCapacityUnits=5)
-    }
- ]
-
-dynamo = Dynamo()
-dynamo.init_app(app)
-dynamo.create_all()
+dynamodb = boto3.resource('dynamodb', region_name='us-west-2')
+table = dynamodb.Table(DYNAMO_TABLE)
 
 # creating flask route for type argument
 @app.route('/', methods=['GET', 'POST'])
@@ -56,8 +48,10 @@ def get_message_stats():
     """
     provides a status that players can check
     """
-    msg_count = len(MESSAGES.keys())
-    return "There are {} messages in the MESSAGES dictionary".format(msg_count)
+    # use DescribeTable to get number of items in DynamoDB table rather than
+    # Scan as a Scan is very expensive and wille exhaust read capacity
+    # estimated_count = table.item_count
+    return "There are zero or some messages in the DynamoDB table, I don't know."
 
 def process_message(msg):
     """
@@ -70,70 +64,24 @@ def process_message(msg):
     # log
     logging.info("Processing message for msg_id={} with part_number={} and data={}".format(msg_id, part_number, data))
 
-    # Try to get the parts of the message from the MESSAGES dictionary.
-    # If it's not there, create one that has None in both parts
+    # store this part of the message in the dynamodb table
+    table.put_item(
+        Item={
+            'msg_id': msg_id,
+            'part_number': part_number,
+            'data': data
+        },
+        ConditionExpression='attribute_not_exists(msg_id)')
 
-    table = dynamo.tables['messages']
-    item = {'first': None, 'second': None}
+    # try to get the parts of the message from the dynamodb table
+    db_messages = table.query(KeyConditionExpression=Key('msg_id').eq(msg_id))
 
-    try:
-        response = table.get_item(
-            Key={
-                'msg_id': msg_id
-            }
-        )
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-    else:
-        item = response['Item']
-        print("GetItem succeeded:")
-        print(json.dumps(item, indent=4, cls=DecimalEncoder))
-
-    # parts = MESSAGES.get(msg_id, [None, None])
-
-    # # store this part of the message in the correct part of the list
-    # parts[part_number] = data
-
-    # # store the parts in MESSAGES
-    # MESSAGES[msg_id] = parts
-
-    if part_number == 0:
-        response = table.update_item(
-            Key={
-                'msg_id': msg_id,
-            },
-            UpdateExpression="set first = :r",
-            ExpressionAttributeValues={
-                ':r': data,
-            },
-            ReturnValues="UPDATED_NEW"
-        )
-        first_part = data
-        second_part = item.second
-    elif part_number == 1:
-        response = table.update_item(
-            Key={
-                'msg_id': msg_id,
-            },
-            UpdateExpression="set second = :r",
-            ExpressionAttributeValues={
-                ':r': data,
-            },
-            ReturnValues="UPDATED_NEW"
-        )
-        first_part = item.first
-        second_part = data
-
-    print("UpdateItem succeeded:")
-    print(json.dumps(response, indent=4, cls=DecimalEncoder))
-
-    # if both parts are filled, the message is complete
-    if None not in parts:
+    # if we have both parts, the message is complete
+    if db_messages["Count"] == 2:
         # app.logger.debug("got a complete message for %s" % msg_id)
         logging.info("Have both parts for msg_id={}".format(msg_id))
         # We can build the final message.
-        # result = parts[0] + parts[1]
-        result = first_part + second_part
+        result = db_messages["Items"][0]["data"] + db_messages["Items"][1]["data"]
         logging.debug("Assembled message: {}".format(result))
         # sending the response to the score calculator
         # format:
